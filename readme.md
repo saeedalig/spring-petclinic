@@ -78,7 +78,7 @@ Using Kubernetes for your CI/CD pipeline infrastructure provides robust, scalabl
 - **Isolation:** Each stage of the CI/CD pipeline can run in isolated containers, improving security and reliability.
 
 ### Ingress Controller to Expose Services
-I have used Ingress Controller for Exposing services like Jenkins, SonarQube, and Nexus via an Ingress controller in Kubernetes which offers several advantages:
+I have used Ingress Controller for Exposing services like Jenkins, SonarQube, and Nexus in Kubernetes which offers several advantages:
 - Ingress provides a `single entry point` for managing external access to multiple services within your Kubernetes cluster. Instead of exposing each service individually with `NodePort`or `LoadBalancer` services, use Ingress to consolidate routing and SSL termination at the Ingress controller level. This reduces the number of `external IP addresses` and `load balancers` needed, thus cutting down on associated costs`.
 
 - Ingress allows you to define rules (based on hostnames, paths, etc.) to route traffic to different services within your cluster. This simplifies traffic management and load balancing across applications.
