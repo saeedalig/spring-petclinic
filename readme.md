@@ -177,3 +177,109 @@ cat /nexus-data/admin.password
   - `Nexus Artifact Uploader`: This plugin is used to upload artifacts to Nexus.
   - `Pipeline Utility Steps`: If you're using Jenkins pipelines, this plugin provides various steps including file operations(e.g. reading pom.xml)
 
+## Pipeline Configuration
+Pipeline configuration in the context of CI/CD involves setting up automated workflows that are triggered by specific events. In this case, using a `GitHub webhook` is a common approach to trigger these pipelines.
+
+- A `webhook` is a way for an application to provide other applications with real-time information. It delivers data to other applications as it happens, meaning you get data immediately.
+- When an event(push, pull_request, issue etc) that you subscribed to occurs, GitHub sends an `HTTP POST` request to the URL you specified. This request contains a JSON payload with details about the event.
+- The server at the specified URL (often a CI/CD tool like `Jenkins`, CircleCI, Travis CI, etc.) receives the payload and triggers the appropriate pipeline or workflow.
+
+### Branching Strategy
+In this project, I assume `Trunk-Based Development`, a branching strategy for version control systems where all developers integrate their changes into a single main branch (often called "trunk" or "main") frequently, is followed. If a feature branch is necessary, create it off the main branch, work on it briefly, and merge it back into the main branch as soon as possible, ensuring Short-Lived Feature Branches.
+
+Trunk-Based Development is a strategy that promotes collaboration, continuous integration, and high code quality, making it well-suited for modern agile and DevOps practices.
+
+### Triggers
+Triggers in a CI/CD pipeline are mechanisms that automatically start the pipeline's execution based on specific `events`. Properly configuring these triggers ensures that your pipeline responds appropriately to code changes and other relevant actions.
+
+**Events:**
+The followings are some important events often used.
+- `push:` Trigger the pipeline when code is pushed to a specific branch.
+- `pull_request:` Trigger the pipeline when a pull request is opened, updated, or merged.
+- `Scheduled Triggers(Cron Jobs):` Run the pipeline at specified intervals (e.g., nightly builds).
+- `Manual Triggers:` Allow users to manually trigger the pipeline from the CI/CD tool’s interface.
+- `Webhook Triggers:` Trigger the pipeline based on events from `external systems`, such as GitHub, GitLab, or Bitbucket.
+  
+In this project `Webhook` will be used to trigger the pipeline whenever a PR is opened againt `main` branch.
+
+To achieve this, I will be installing The `GitHub Generic Webhook Plugin` that allows you to trigger Jenkins jobs or pipelines based on events from GitHub webhooks. This plugin is especially useful when you want to create more customized and flexible CI/CD workflows that are not limited to the default triggers provided by other GitHub integration plugins.
+
+#### Setup Webhook
+
+**1. Install the GitHub Generic Webhook Plugin:**
+
+In Jenkins, go to Manage Jenkins -> Manage Plugins -. Available tab -> search for "GitHub Generic Webhook Plugin".
+
+**2. Configure the GitHub Webhook:**
+
+- Go to your `GitHub repository` settings.
+- Navigate to Webhooks and click on Add webhook.
+- Set the payload URL to your Jenkins URL followed by /generic-webhook-trigger/invoke `(e.g., http://your-jenkins-server/generic-webhook-trigger/invoke?tpken=your-token)`.
+- Choose application/json as the content type.
+- Select the `event` you want to trigger the webhook (e.g. `pull_request`).
+- Click Add webhook
+
+**3. Configure the Webhook Trigger:**
+
+In the Generic Webhook Trigger section in Jenkins UI:
+- **Token:** Specify a secure token. This token will be used in the webhook URL to authenticate requests.
+- **Post Content Parameters:** Define the parameters you expect from the webhook payload. For a GitHub PR webhook, you might specify parameters like action, pull_request, and other relevant fields.
+- Add the following key-value pair to capture the `action`, `source_branch` and `target_branch`:
+    - `variable: action, expression: $.action`
+    - `variable: source_branch, expression: $.pull_request.head.ref`
+    - `variable: target_branch, expression: $.pull_request.base.ref`
+    
+- **Optional Filter:** Use Groovy expressions or JSONPath to filter events. For example, you can filter events to trigger only when the action is opened for pull requests.
+
+    - `"Text"`: $action $source_branch $target_branch
+    - `"Expression"`: ^opened\.*\main$
+
+**Groovy Script** for triggers:
+
+```groovy
+triggers {
+        GenericTrigger(
+            genericVariables: [
+                [key: 'action', value: '$.action'],
+                [key: 'source_branch', value: '$.pull_request.head.ref'],
+                [key: 'target_branch', value: '$.pull_request.base.ref']
+            ],
+            causeString: 'Triggered by PR from ${source_branch} to ${target_branch}',
+            token: 'demo', // Ensure this token matches the one configured in the webhook
+            printContributedVariables: true,  // Prints Contributing Variables in console output
+            printPostContent: false,  // Prints payload details in console output
+            silentResponse: true,
+            regexpFilterText: '''${action}\n${source_branch}\n${target_branch}''',
+            regexpFilterExpression: '^opened\n.*\nmain$'
+        )
+    }
+```
+
+This ensures that the job is triggered only when a `pull request` is opened against the `main` branch.
+
+### Environment Variables
+This section outlines the `environment variables` used in the CI/CD pipeline configuration. These variables are crucial for managing and automating the build, test, and deployment processes.
+
+**Modularity:** Using environment variables makes the pipeline script modular and easier to maintain. Changes to configurations like URLs, credentials, or version numbers can be made in one place.
+
+**Security:** Sensitive information such as credentials should be stored securely and referenced using environment variables.
+
+**Flexibility:** Environment variables allow for easy adjustments and scalability, such as changing repository URLs or deploying to different environments.
+
+```groovy
+environment{
+    NEXUS_VERSION = "nexus3"
+    NEXUS_URL = "http://IP:PORT"
+    NEXUS_REPOSITORY = "petclinic-war-repo"
+    NEXUS_HELM_REPOSITORY = "petclinic-chart-repo"
+    NEXUS_CREDENTIAL_ID = "CREDS-ID"
+    DOCKERHUB_USERNAME = "USERNAME"
+    APP_NAME = "petclinic"
+    IMAGE_NAME = "${DOCKERHUB_USERNAME}/${APP_NAME}"
+    IMAGE_TAG = "${BUILD_NUMBER}"
+    CHART_DIR = "petclinic-chart"
+    CHART_VERSION = "0.${BUILD_NUMBER}.0"
+	APP_VERSION = "0.${BUILD_NUMBER}.0"
+    RELEASE_NAME = "petclinic"
+  }
+```
