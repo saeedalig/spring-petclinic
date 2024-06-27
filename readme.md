@@ -283,3 +283,442 @@ environment{
     RELEASE_NAME = "petclinic"
   }
 ```
+
+## Pipeline Stages
+In software development, especially within CI/CD environments, a pipeline represents an automated series of steps that code changes undergo to be tested, validated, and prepared for deployment. The typical stages of a CI/CD pipeline vary from project to project and organization to organization. I am designing a robust pipeline
+that's why it may include multiples stages.
+
+***Agent Template***:
+```bash
+kubernetes {
+    yaml '''
+        apiVersion: v1
+        kind: Pod
+        metadata:
+          labels:
+            app: test
+        spec:
+          containers:
+          - name: <container_name>
+            image: <docker_image>
+            command:
+            - cat
+            tty: true
+          - name: <container_name>
+            image: <docker_image>
+            command:
+            - cat
+            tty: true
+    '''
+}
+```
+
+### Stage 1. Checkout SCM
+The Jenkins retrieves the latest code from the repository to the local build environment where the pipeline will run.
+- Checkout the `source branch` of the repository.
+- Uses a git container to fetch the latest code from the GitHub repository.
+- Sends a success status notification upon successful checkout.
+- 
+**Docker Container:**
+```bash
+- name: git
+  image: bitnami/git:latest
+  command:
+  - cat
+  tty: true
+```
+**Stage:**
+```bash
+stages {
+    stage('Checkout SCM') {
+      steps {
+        container('git') {
+          script {
+            checkout([
+                $class: 'GitSCM', 
+                //branches: [[name: "*/${source_branch}"]], 
+                branches: [[name: '**']],
+                extensions: [], 
+                userRemoteConfigs: [[url: 'your-repo-url']]
+            ])
+          }
+        }
+      }
+      post {
+        success {
+          sendStatus(Checkout SCM","success")
+        }
+        failure {
+          sendStatus(Checkout SCM","failure")
+        }
+      }
+    }
+```
+
+### Stage 2. Maven Build 
+The code is built using Maven, with Jenkins automating the build process.
+
+**Docker Container:**
+```bash
+- name: maven
+    image: maven:3.8.3-adoptopenjdk-11
+    command:
+    - cat
+    tty: true
+    volumeMounts:
+    - mountPath: "/root/.m2/repository"
+      name: cache
+volumes:
+  - name: cache
+    persistentVolumeClaim:
+      claimName: maven-cache
+```
+**Caching Maven Dependencies:** By mounting a persistent volume at `/root/.m2/repository`, the Maven dependencies downloaded during the build process are cached. This cache is stored outside the container and persists across multiple builds, significantly reducing the time required for dependency resolution in subsequent builds. Next time Maven Build will not take the longer time since dependencies are alreaady persisted. Create a file with `.yaml` extension and paste below content.
+```yaml
+# maven-pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: 
+  name: maven-cache
+spec: 
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+```
+
+**Groovy Script:**
+```groovy
+stage('Maven Build') {
+    steps {
+        container('maven') {
+            sh 'mvn -Dmaven.test.failure.ignore=true clean package'
+            }
+        }
+        post {
+            success {
+                junit '**/target/surefire-reports/*.xml'
+                sendStatus("Maven Build", "success")
+            }
+            failure {
+                sendStatus("Maven Build", "failure")
+            }
+        }
+    }
+```
+
+### Stage 3. SonarQube Scan
+In this stage, the application code is analyzed using SonarQube. The SonarQube scan helps to maintain code quality by identifying bugs, vulnerabilities, and code smells in the codebase.
+
+**Docker Container:**
+```bash
+- name: sonarcli
+  image: sonarsource/sonar-scanner-cli:latest
+  command:
+  - cat
+  tty: true
+```
+
+**Groovy Script:**
+```groovy
+    stage('Sonar Scan'){
+      steps{
+        container('sonarcli'){
+          withSonarQubeEnv(credentialsId: '<sonar-creds>', installationName: '<server-name>') { 
+            sh '''/opt/sonar-scanner/bin/sonar-scanner \
+              -Dsonar.projectKey=petclinic \
+              -Dsonar.projectName=petclinic \
+              -Dsonar.projectVersion=1.0 \
+              -Dsonar.sources=src/main \
+              -Dsonar.tests=src/test \
+              -Dsonar.java.binaries=target/classes  \
+              -Dsonar.language=java \
+              -Dsonar.sourceEncoding=UTF-8 \
+              -Dsonar.java.libraries=target/classes
+            '''
+          }
+        }
+      }
+      post {
+        success {
+          sendStatus("Sonar Scan","success")
+        }
+      }
+    }
+
+```
+
+### Stage 4. Quality Gate 
+- A `Quality Gate` is a crucial stage that evaluates the overall health and quality of the codebase. It is applied to assess the code against `predefined criteria`.
+- The Jenkins job `waits` for the Quality Gate to provide its verdict on the code quality. This waiting period ensures that the evaluation completes before proceeding further with other stages in the pipeline.
+- If the Quality Gate criteria are met (indicating good code quality), the pipeline proceeds to the next stages. However, if the Quality Gate criteria are not met, the pipeline may be configured to abort, preventing potentially flawed code from progressing further in the deployment process.
+
+**Docker Container:**
+```bash
+- name: sonarcli
+  image: sonarsource/sonar-scanner-cli:latest
+  command:
+  - cat
+  tty: true
+```
+**Groovy Script:**
+```groovy
+stage('Quality Gate'){
+      steps{
+        container('sonarcli'){
+          timeout(time: 1, unit: 'HOURS') {
+            waitForQualityGate abortPipeline: true
+          }
+        }
+      }
+      post {
+        success {
+          sendStatus("QG Check","success")
+        }
+      }
+    }
+```
+
+
+### Stage 5. Publish Artifacts to Nexus
+Publishing Maven artifacts (such as JAR files) to a centralized Nexus repository ensures consistent and controlled artifact management throughout the CI/CD pipeline.
+
+**Docker Agent:** ll be using default container `jnlp`.
+
+**Groovy Script:**
+```groovy
+stage('Publish Artifacts to Nexus'){
+      steps {
+        container('jnlp'){
+          script {
+            pom = readMavenPom file: "pom.xml";
+            filesByGlob = findFiles(glob: "target/*.${pom.packaging}"); 
+            echo "${filesByGlob[0].name} ${filesByGlob[0].path} ${filesByGlob[0].directory} ${filesByGlob[0].length} ${filesByGlob[0].lastModified}"
+            artifactPath = filesByGlob[0].path;
+            artifactExists = fileExists artifactPath;
+            if(artifactExists) {
+                echo "*** File: ${artifactPath}, group: ${pom.groupId}, packaging: ${pom.packaging}, version ${pom.version}";
+                nexusArtifactUploader(
+                    nexusVersion: NEXUS_VERSION,
+                    protocol: NEXUS_PROTOCOL,
+                    nexusUrl: NEXUS_URL,
+                    groupId: pom.groupId,
+                    version: pom.version,
+                    repository: NEXUS_REPOSITORY,
+                    credentialsId: NEXUS_CREDENTIAL_ID,
+                    artifacts: [
+                        [artifactId: pom.artifactId,
+                        classifier: '',
+                        file: artifactPath,
+                        type: pom.packaging],
+
+                        [artifactId: pom.artifactId,
+                        classifier: '',
+                        file: "pom.xml",
+                        type: "pom"]
+                    ]
+                );
+
+            } else {
+                error "*** File: ${artifactPath}, could not be found";
+            }
+          }
+        }
+      }
+      post {
+        success {
+          sendStatus("Push to Nexus","success")
+        }
+        failure {
+          sendStatus("Push to Nexus","failure")
+        }
+      }
+    }
+```
+
+### Stage 6. Build and Push Docker Image
+Building and pushing Docker images is a critical step to ensure that your application can be deployed consistently across different environments. I'm here using `Docker Hub` as regestry. You can use as per your needs like private container registry.
+
+**Docker Container:**
+```yaml
+- name: docker
+  image: docker:latest
+  command:
+  - cat
+  tty: true
+  volumeMounts:
+  - mountPath: /var/run/docker.sock
+    name: docker-sock
+volumes:
+- name: docker-sock
+  hostPath:
+    path: /var/run/docker.sock
+```
+
+**Access to Docker Daemon:** By mounting `/var/run/docker.sock` from the host to the Docker container, this configuration grants the container direct access to the Docker daemon running on the host machine. This allows the container to interact with Docker services and perform actions such as building, pushing, or managing Docker images and containers.
+
+**Groovy Script:**
+```groovy
+stage('Build and Push Docker Image'){
+      steps{
+        container('docker'){
+          sh "docker build -t $IMAGE_NAME:$IMAGE_TAG ."
+          sh "docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest"
+          withCredentials([usernamePassword(credentialsId: 'CREDS', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
+             sh "docker login -u $USER -p $PASS"
+             sh "docker push $IMAGE_NAME:$IMAGE_TAG"
+             sh "docker push $IMAGE_NAME:latest"
+          }
+          sh "docker rmi $IMAGE_NAME:$IMAGE_TAG"
+          sh "docker rmi $IMAGE_NAME:latest"
+        }
+      }
+      post {
+        success {
+          sendStatus("Push to Dockerhub","success")
+        }
+        failure {
+          sendStatus("Push to Dockerhub","failure")
+        }
+      }
+    }
+
+```
+
+### Stage 7. Update Chart Version
+you can automatically update the `version` and `appVersion` in your Helm chart's Chart.yaml, commit and push these changes back to your GitHub repository, and then package and push the Helm chart to your Helm repository. This approach ensures that your Kubernetes application is consistently `versioned` and `deployed`.
+
+**Prerequisites**
+`Helm Installed:` Ensure Helm is installed and configured on the Jenkins agent.
+`Helm Chart:` A Helm chart should be available in your repository.
+`Credentials:` If pushing the Helm chart to a repository, ensure credentials are stored securely in Jenkins.
+
+**Docker Container:**
+```bash
+- name: kubectl_helm_cli
+  image: kunchalavikram/kubectl_helm_cli:latest
+  command:
+  - cat
+  tty: true
+```
+
+**Groovy Script:**
+```groovy
+stage('Update Helm Chart Version') {
+  steps {
+    container('git') {
+      script {
+        // Configure Git to treat the workspace directory as safe
+        sh 'git config --global --add safe.directory "${WORKSPACE}"'
+
+        // Update Chart.yaml with desired version and appVersion
+        sh "sed -i 's/^version: .*/version: ${CHART_VERSION}/' ${CHART_DIR}/Chart.yaml"
+        sh "sed -i 's/^appVersion: .*/appVersion: ${APP_VERSION}/' ${CHART_DIR}/Chart.yaml"
+        sh "cat ${CHART_DIR}/Chart.yaml | grep -i version"  // Optional: Verify the updated versions
+
+        // Configure Git user information
+        sh '''
+          git config --global user.name "your-name"
+          git config --global user.email "your@example.com"
+        '''
+
+        // Add and commit the changes
+        sh "git add ${CHART_DIR}/Chart.yaml"
+        sh 'git commit -m "Update Helm chart version to ${CHART_VERSION} and appVersion to ${APP_VERSION}"'
+
+        // Push the changes to the GitHub repository
+        withCredentials([usernamePassword(credentialsId: 'github-creds', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
+          sh "git push https://${USER}:${PASS}@github.com/username/repo-name.git main"
+        }
+      }
+    }
+  }
+}
+
+```
+
+### Stage 8. Package Helm Chart
+Helm charts allow you to define, install, and upgrade complex Kubernetes applications using a single command, Packages the Helm chart using the `helm package` command.
+
+**Docker Container:**
+```bash
+- name: kubectl_helm_cli
+  image: asa-96/kubectl_helm_cli:latest
+  command:
+  - cat
+  tty: true
+```
+
+**Groovy Script:**
+```groovy
+stage('Package Helm Chart') {
+      steps {
+        container('kubectl-helm-cli') {
+          // Package Helm chart
+          sh "helm package ${CHART_DIR} -d ."
+        }
+      }
+    }
+```
+
+
+### Stage 9. Publish Chart to Nexus
+you can automate the process of `packaging` and `publishing` your Helm chart to Nexus, ensuring it's available for `deployment` and distribution within your organization.
+
+**Docker Container:**
+```bash
+- name: curl
+  image: alpine/curl:latest
+  command:
+  - cat
+  tty: true
+```
+
+**Groovy Script:**
+```groovy
+stage('Publish Chart to Nexus') {
+      steps {
+        container('curl') {
+          script {
+            def helmChart = findFiles(glob: "${CHART_DIR}-*.tgz")[0]
+            withCredentials([usernamePassword(credentialsId: "${NEXUS_CREDENTIAL_ID}", usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASSWORD')]) {
+              sh """
+                curl -v --user "${NEXUS_USER}:${NEXUS_PASSWORD}" --upload-file "${helmChart.path}" "${NEXUS_URL}/repository/${NEXUS_REPO}/${helmChart.name}"
+              """
+            }
+          }
+        }
+      }
+    }
+```
+
+### Stage 10. Release Helm Chart
+you can automate the deployment of your Helm chart from `Nexus` to your `Kubernetes cluster` using Jenkins pipeline, ensuring a smooth CI/CD process
+
+**Docker Container:**
+```bash
+- name: kubectl_helm_cli
+  image: asa-96/kubectl_helm_cli:latest
+  command:
+  - cat
+  tty: true
+```
+
+**Groovy Script:**
+```groovy
+stages {
+    stage('Deploy to Kubernetes') {
+        steps {
+            container('kubectl-helm-cli') {
+                withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: "${K8S_CREDENTIALS_ID}", namespace: '', serverUrl: '') {
+                    script {
+                        sh "helm repo add ${NEXUS_HELM_REPOSITORY} ${NEXUS_URL}"
+                        sh "helm repo update"
+                        sh "helm upgrade --install ${RELEASE_NAME} ${NEXUS_HELM_REPOSITORY}/${CHART_NAME}"
+                    }
+                }
+            }
+        }
+    }
+```
