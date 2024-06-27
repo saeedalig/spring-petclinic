@@ -11,6 +11,7 @@ Welcome to the documentation for the Petclinic application's CI/CD pipeline. Thi
     - [Tools and Technologies](#tools-and-technologies)
 3. [Server Setup for Pipeline](#server-setup-for-pipeline)
     - [Why To Use Kubernetes](#why-to-use-kubernetes)
+    - [Ingress Controller to Expose Services](#ingress-controller-to-expose-services)
     - [Jenkins on Kubernetes](#jenkins-on-kubernetes)
     - [SonarQube on Kubernetes](#sonarqube-on-kubernetes)
     - [Sonatype Nexus on Kubernetes](#sonatype-nexus-on-kubernetes)
@@ -76,6 +77,59 @@ Using Kubernetes for your CI/CD pipeline infrastructure provides robust, scalabl
 - **Resource Limits:** You can set resource limits and requests for containers to ensure that CI/CD tools do not exceed allocated resources.
 - **Isolation:** Each stage of the CI/CD pipeline can run in isolated containers, improving security and reliability.
 
+### Ingress Controller to Expose Services
+I have used Ingress Controller for Exposing services like Jenkins, SonarQube, and Nexus via an Ingress controller in Kubernetes which offers several advantages:
+- Ingress provides a `single entry point` for managing external access to multiple services within your Kubernetes cluster. Instead of exposing each service individually with `NodePort`or `LoadBalancer` services, use Ingress to consolidate routing and SSL termination at the Ingress controller level. This reduces the number of `external IP addresses` and `load balancers` needed, thus cutting down on associated costs`.
+
+- Ingress allows you to define rules (based on hostnames, paths, etc.) to route traffic to different services within your cluster. This simplifies traffic management and load balancing across applications.
+![Image Alt Text](https://www.checkmateq.com/blog/wp-content/uploads/2022/10/Hire-Dedicated-Cloud-Engineer5-1.png)
+
+
+**Ingress Manifest:**
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: custom-ingress
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"  # Add this line
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: jenkins.klouds.site
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: jenkins
+            port:
+              number: 8080
+  - host: sonar.klouds.site
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: sonarqube-sonarqube
+            port:
+              number: 9000
+  - host: nexus.klouds.site
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: nexus-nexus-repository-manager
+            port:
+              number: 8081
+
+```
 ### Jenkins on Kubernetes
 - Jenkins on Kubernetes is the integration of the Jenkins automation server with the Kubernetes container orchestration platform. This combination streamlines the deployment, scaling, and management of Jenkins instances and build environments.
 - Jenkins leverages Kubernetes’ dynamic resource allocation to create `ephemeral build agents` (slaves) as containers, which are automatically scaled and terminated based on demand. This integration provides flexibility, increased resource efficiency, and reduced operational overhead.
