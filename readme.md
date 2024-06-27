@@ -30,15 +30,10 @@ Welcome to the documentation for the Petclinic application's CI/CD pipeline. Thi
     - [Stage 9. Publish Helm Chart to Nexus](#stage-9-publish-helm-chart-to-nexus)
     - [Stage 10. Release Helm Chart](#stage-10-release-helm-chart)
 
-6. [Monitoring and Logging](#monitoring-and-logging)
+6. [Monitoring](#monitoring)
     - [Monitoring Tools](#monitoring-tools)
-    - [Logging](#logging)
-7. [Troubleshooting](#troubleshooting)
-    - [Common Issues](#common-issues)
-    - [Error Handling](#error-handling)
-8. [Best Practices](#best-practices)
-    - [CI/CD Best Practices](#cicd-best-practices)
-    - [Pipeline Optimization](#pipeline-optimization)
+
+
 
 
 ## Introduction
@@ -722,3 +717,8 @@ stages {
         }
     }
 ```
+
+## Monitoring 
+
+### Monitoring Tools
+Details on monitoring tools like Prometheus and Grafana, including configuration steps.
